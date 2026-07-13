@@ -20,3 +20,8 @@ SELECT create_hypertable('market_ohlcv', 'time', if_not_exists => TRUE);
 -- Lookups are almost always by symbol over a time range.
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time
     ON market_ohlcv (symbol, time DESC);
+
+-- One bar per (symbol, time). Enables idempotent upserts on re-ingest.
+-- Note: a unique index on a hypertable must include the partition column (time).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ohlcv_symbol_time
+    ON market_ohlcv (symbol, time);
