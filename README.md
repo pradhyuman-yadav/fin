@@ -26,6 +26,24 @@ pip install -r requirements.txt
 cp .env.example .env   # then fill in your keys
 ```
 
+## Run the stack
+
+```bash
+cp .env.example .env    # add ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY
+docker compose up -d --build
+```
+
+Starts three services (all `restart: unless-stopped`):
+
+| Service | Container | Role |
+|---------|-----------|------|
+| `timescaledb` | `fin_timescaledb` | TimescaleDB, port 5432, 365-day retention |
+| `poller` | `fin_poller` | polls Alpaca latest 1-min bars → `market_ohlcv` |
+| `dashboard` | `fin_dashboard` | monitoring UI at http://localhost:8000 |
+
+Watch: `docker compose ps`, `docker compose logs -f poller`.
+Edit `config/watchlist.txt` then `docker compose restart poller` to change symbols.
+
 ## Usage
 
 1. Pick a workflow in `workflows/`.

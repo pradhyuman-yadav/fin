@@ -18,5 +18,39 @@ services:
       timeout: 5s
       retries: 10
 
+  # Live 1-min bar poller. Reads ALPACA_* from .env; DATABASE_URL points at the
+  # timescaledb service (overriding the localhost value in .env).
+  poller:
+    build: .
+    container_name: fin_poller
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+    command: ["python", "tools/alpaca_live.py", "--interval", "60"]
+    volumes:
+      - ./tools:/app/tools:ro
+      - ./config:/app/config:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  # Read-only monitoring dashboard on http://localhost:8000
+  dashboard:
+    build: .
+    container_name: fin_dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+    command: ["python", "tools/dashboard.py", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${DASHBOARD_PORT:-8000}:8000"
+    volumes:
+      - ./tools:/app/tools:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
 volumes:
   timescale_data:
