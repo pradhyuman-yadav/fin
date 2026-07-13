@@ -30,12 +30,19 @@ KEY_ID = os.getenv("ALPACA_API_KEY_ID", "")
 SECRET = os.getenv("ALPACA_API_SECRET_KEY", "")
 FEED = os.getenv("ALPACA_FEED", "iex")
 
+# Upsert on (symbol, time). updated_at is bumped only when a value actually
+# changes — an identical re-fetched bar hits the WHERE guard and writes nothing.
 UPSERT = """
-INSERT INTO market_ohlcv (time, symbol, open, high, low, close, volume)
-VALUES (%s, %s, %s, %s, %s, %s, %s)
+INSERT INTO market_ohlcv (time, symbol, open, high, low, close, volume, updated_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, now())
 ON CONFLICT (symbol, time) DO UPDATE SET
     open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-    close = EXCLUDED.close, volume = EXCLUDED.volume;
+    close = EXCLUDED.close, volume = EXCLUDED.volume, updated_at = now()
+WHERE market_ohlcv.open   IS DISTINCT FROM EXCLUDED.open
+   OR market_ohlcv.high   IS DISTINCT FROM EXCLUDED.high
+   OR market_ohlcv.low    IS DISTINCT FROM EXCLUDED.low
+   OR market_ohlcv.close  IS DISTINCT FROM EXCLUDED.close
+   OR market_ohlcv.volume IS DISTINCT FROM EXCLUDED.volume;
 """
 
 

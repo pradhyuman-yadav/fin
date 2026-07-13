@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS market_ohlcv (
     high    DOUBLE PRECISION,
     low     DOUBLE PRECISION,
     close   DOUBLE PRECISION,
-    volume  DOUBLE PRECISION
+    volume  DOUBLE PRECISION,
+    -- Audit stamp (microsecond precision). Bumped only when a bar's values
+    -- actually change on re-ingest; identical re-fetches are a no-op.
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Turn it into a hypertable partitioned on time.
