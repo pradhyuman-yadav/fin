@@ -22,3 +22,11 @@ XOM
 CVX
 SPY
 QQQ
+
+# Crypto (24/7, free). Slash format routes to the crypto endpoint.
+BTC/USD
+ETH/USD
+SOL/USD
+LTC/USD
+DOGE/USD
+AVAX/USD

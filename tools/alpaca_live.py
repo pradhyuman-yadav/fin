@@ -34,6 +34,8 @@ DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")
 KEY_ID = os.getenv("ALPACA_API_KEY_ID", "")
 SECRET = os.getenv("ALPACA_API_SECRET_KEY", "")
 FEED = os.getenv("ALPACA_FEED", "iex")
+# Crypto data location: us (Alpaca US), us-1/eu-1 (Kraken). Crypto is free, 24/7.
+CRYPTO_LOC = os.getenv("ALPACA_CRYPTO_LOC", "us")
 
 # Free tier: 200 req/min. Alpaca caps symbols/request; batch to stay well under.
 SYMBOLS_PER_REQUEST = 1000
@@ -63,12 +65,11 @@ def _chunks(seq, n):
         yield seq[i : i + n]
 
 
-def fetch_latest(symbols, limiter):
-    """Return {symbol: bar} for the latest 1Min bar of each symbol."""
-    url = f"{DATA_URL}/v2/stocks/bars/latest"
+def _get_bars(url, symbols, extra, limiter):
+    """Fetch latest bars from one endpoint, batched + rate-limited."""
     out = {}
     for batch in _chunks(symbols, SYMBOLS_PER_REQUEST):
-        params = {"symbols": ",".join(batch), "feed": FEED}
+        params = {"symbols": ",".join(batch), **extra}
         limiter.wait()
         resp = requests.get(url, headers=_headers(), params=params, timeout=30)
         if resp.status_code == 429:
@@ -81,6 +82,23 @@ def fetch_latest(symbols, limiter):
             print(f"  API {resp.status_code}: {resp.text[:200]}", flush=True)
             continue
         out.update(resp.json().get("bars") or {})
+    return out
+
+
+def fetch_latest(symbols, limiter):
+    """Return {symbol: bar} for the latest 1Min bar of each symbol.
+
+    Symbols containing '/' (e.g. BTC/USD) are routed to the crypto endpoint;
+    the rest go to the stock endpoint.
+    """
+    stocks = [s for s in symbols if "/" not in s]
+    crypto = [s for s in symbols if "/" in s]
+    out = {}
+    if stocks:
+        out.update(_get_bars(f"{DATA_URL}/v2/stocks/bars/latest", stocks, {"feed": FEED}, limiter))
+    if crypto:
+        url = f"{DATA_URL}/v1beta3/crypto/{CRYPTO_LOC}/latest/bars"
+        out.update(_get_bars(url, crypto, {}, limiter))
     return out
 
 
