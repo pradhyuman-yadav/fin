@@ -25,3 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time
 -- Note: a unique index on a hypertable must include the partition column (time).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ohlcv_symbol_time
     ON market_ohlcv (symbol, time);
+
+-- Retention: keep 365 days, drop older chunks automatically (background job).
+SELECT add_retention_policy('market_ohlcv', INTERVAL '365 days', if_not_exists => TRUE);
