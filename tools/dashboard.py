@@ -171,6 +171,10 @@ PAGE = r"""<!doctype html>
   tbody tr:hover td{background:#1a2230}
   tbody tr.sel td{background:#1e2a3d}
   .chg.up{color:var(--up)}.chg.down{color:var(--down)}
+  .tag{font-size:9px;padding:1px 5px;border-radius:5px;font-weight:700;
+       letter-spacing:.04em;margin-left:6px;vertical-align:middle}
+  .tag.s{background:#16283f;color:#58a6ff}
+  .tag.c{background:#2b2140;color:#bd8cff}
   .fresh{color:var(--ok)}.stale{color:var(--warn)}.old{color:var(--bad)}
   .btns{display:flex;gap:6px}
   .btns button{background:var(--card);border:1px solid var(--line);color:var(--mut);
@@ -280,8 +284,9 @@ function renderRows(){
     const sv=sparks[b.symbol]||[];
     const chg=(sv.length>=2 && b.open)?((b.close-b.open)/b.open*100):null;
     const chgTxt=chg==null?'—':(chg>=0?'+':'')+chg.toFixed(2)+'%';
+    const isC=b.symbol.includes('/');
     return `<tr data-sym="${b.symbol}" class="${b.symbol===selected?'sel':''}">
-      <td><b>${b.symbol}</b></td>
+      <td><b>${b.symbol}</b><span class="tag ${isC?'c':'s'}">${isC?'CRYPTO':'STOCK'}</span></td>
       <td>${b.close!=null?b.close.toFixed(2):'—'}</td>
       <td class="chg ${chg>=0?'up':'down'}">${chgTxt}</td>
       <td>${sparkSVG(sv)}</td>
