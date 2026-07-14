@@ -43,7 +43,19 @@ Starts three services (all `restart: unless-stopped`):
 | `dashboard` | `fin_dashboard` | monitoring UI at http://localhost:8000 |
 
 Watch: `docker compose ps`, `docker compose logs -f poller`.
-Edit `config/watchlist.txt` then `docker compose restart poller` to change symbols.
+
+Change symbols in one place — the `watchlist` table in the DB (source of truth
+for the poller and the n8n workflows):
+
+```sql
+-- add
+INSERT INTO watchlist (symbol, asset_type) VALUES ('COIN','stock');
+-- pause without deleting
+UPDATE watchlist SET active = false WHERE symbol = 'DOGE/USD';
+```
+
+The poller picks up changes on its next cycle (n8n on its next run).
+`config/watchlist.txt` is a fallback used only if the table is unavailable.
 
 ## Usage
 

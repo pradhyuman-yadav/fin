@@ -48,7 +48,7 @@ def _headers():
     return {"APCA-API-KEY-ID": KEY_ID, "APCA-API-SECRET-KEY": SECRET}
 
 
-def load_watchlist(path):
+def load_watchlist_file(path):
     with open(path, encoding="utf-8") as fh:
         syms = []
         for line in fh:
@@ -58,6 +58,29 @@ def load_watchlist(path):
     if not syms:
         sys.exit(f"Watchlist {path} is empty.")
     return syms
+
+
+def load_watchlist_db():
+    """Read active symbols from the DB watchlist table (single source of truth)."""
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT symbol FROM watchlist WHERE active ORDER BY symbol")
+        return [r[0] for r in cur.fetchall()]
+
+
+def load_watchlist(path=None):
+    """Prefer the DB watchlist; fall back to a file if a path is given or the
+    DB table is unavailable/empty."""
+    if path:
+        return load_watchlist_file(path)
+    try:
+        syms = load_watchlist_db()
+        if syms:
+            print(f"watchlist: {len(syms)} symbols from DB", flush=True)
+            return syms
+        print("watchlist DB empty; falling back to config/watchlist.txt", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"watchlist DB read failed ({exc}); using config/watchlist.txt", flush=True)
+    return load_watchlist_file("config/watchlist.txt")
 
 
 def _chunks(seq, n):
@@ -134,7 +157,8 @@ class RateLimiter:
 
 def main():
     p = argparse.ArgumentParser(description="Poll Alpaca latest 1Min bars into TimescaleDB.")
-    p.add_argument("--watchlist", default="config/watchlist.txt")
+    p.add_argument("--watchlist", default=None,
+                   help="File path to read symbols from. Omit to read the DB watchlist table.")
     p.add_argument("--interval", type=float, default=60.0, help="Seconds between cycles.")
     p.add_argument("--max-rpm", type=int, default=DEFAULT_MAX_RPM, help="Max requests/min.")
     p.add_argument("--once", action="store_true", help="Run one cycle and exit.")

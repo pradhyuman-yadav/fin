@@ -1,5 +1,7 @@
-# Symbols to poll for live 1-min bars. One per line. Blank lines and
-# lines starting with # are ignored. Edit freely, then restart the poller.
+# FALLBACK ONLY. The source of truth is the `watchlist` table in the DB
+# (db/init/03_watchlist.sql). The poller reads this file only if the DB table
+# is unavailable/empty, or when run with --watchlist <path>.
+# One symbol per line; blank lines and # comments ignored.
 AAPL
 MSFT
 GOOGL
