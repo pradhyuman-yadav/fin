@@ -1,0 +1,43 @@
+# TimescaleDB stack for Portainer (central, shared).
+# Deploy via Portainer -> Stacks -> Add stack -> Repository (this repo),
+# compose path: deploy/timescale.portainer.yml
+#
+# Prereqs:
+#   1. Create the shared network once (Portainer -> Networks -> Add network,
+#      name: fin_net, driver: bridge) OR:  docker network create fin_net
+#   2. Set the env vars below in the Portainer stack editor (strong password!).
+#
+# n8n / poller / dashboard join the same fin_net and reach this DB at
+# host "fin_timescaledb", port 5432.
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: fin_timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # Expose the port ONLY if something outside fin_net must reach it.
+    # Prefer leaving it commented and connecting over fin_net by name.
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      # Schema runs once on a fresh volume (hypertables + retention + signals).
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - fin_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  timescale_data:
+
+networks:
+  fin_net:
+    external: true
