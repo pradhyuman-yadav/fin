@@ -12,6 +12,8 @@
 
 services:
   timescaledb:
+    # HA image (Timescale's recommended): includes Toolkit (candlestick_agg /
+    # OHLC financial hyperfunctions) and timescaledb-tune auto-tuning.
     image: timescale/timescaledb-ha:pg18
     container_name: fin_timescaledb
     restart: unless-stopped
@@ -24,9 +26,15 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - timescale_data:/var/lib/postgresql/data
-      # Schema runs once on a fresh volume (hypertables + retention + signals).
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      # IMPORTANT: the HA image stores data under /home/postgres/pgdata/data,
+      # NOT /var/lib/postgresql/data. Mounting the wrong path = data not persisted.
+      - timescale_data:/home/postgres/pgdata/data
+      # The HA image ships its OWN init scripts (000_install_timescaledb,
+      # 001_tune, 010_toolkit) in this dir. Do NOT mount over the whole dir --
+      # that clobbers them. Mount our SQL as individual files with a prefix
+      # (50_/51_) so they run AFTER the image's scripts, on a fresh volume only.
+      - ./db/init/01_init.sql:/docker-entrypoint-initdb.d/50_init.sql:ro
+      - ./db/init/02_signals.sql:/docker-entrypoint-initdb.d/51_signals.sql:ro
     networks:
       - fin_net
     healthcheck:
