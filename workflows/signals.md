@@ -33,6 +33,19 @@ Each indicator casts a vote (+1 bullish / -1 bearish / 0):
 Latest signal per symbol in `market_signals`; shown on the dashboard
 (Signal + RSI columns).
 
+## Dashboard live tuner
+The service stores canonical values using the default thresholds. The dashboard
+re-scores in the browser from the stored raw indicators, so you can tune
+without restarting anything:
+- RSI oversold / overbought levels
+- BUY / SELL score cutoffs
+- signal filter (all / buy / sell / hold / neutral)
+
+Settings persist in the browser (localStorage); **reset** restores defaults.
+These change the dashboard view only — the `market_signals` table keeps the
+service's default-threshold values. (To change the stored values, edit the
+constants in `tools/signals.py`.)
+
 ## Edge cases
 - Indicators are computed on the stored 1-min bars; they warm up as history
   grows (SMA50 needs 50 bars, RSI ~14, etc). Sparse symbols show NULLs / NEUTRAL.

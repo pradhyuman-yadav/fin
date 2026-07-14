@@ -54,7 +54,8 @@ def status():
             "FROM market_ohlcv ORDER BY symbol, time DESC"
         )
         sig = _q(
-            "SELECT DISTINCT ON (symbol) symbol, signal, score, rsi14 "
+            "SELECT DISTINCT ON (symbol) symbol, signal, score, rsi14, "
+            "sma20, sma50, ema12, ema26, macd_hist, bb_upper, bb_lower "
             "FROM market_signals ORDER BY symbol, time DESC"
         )
         sigmap = {r["symbol"]: r for r in sig}
@@ -83,6 +84,13 @@ def status():
                         "signal": (sigmap.get(r["symbol"]) or {}).get("signal"),
                         "score": (sigmap.get(r["symbol"]) or {}).get("score"),
                         "rsi": (sigmap.get(r["symbol"]) or {}).get("rsi14"),
+                        "sma20": (sigmap.get(r["symbol"]) or {}).get("sma20"),
+                        "sma50": (sigmap.get(r["symbol"]) or {}).get("sma50"),
+                        "ema12": (sigmap.get(r["symbol"]) or {}).get("ema12"),
+                        "ema26": (sigmap.get(r["symbol"]) or {}).get("ema26"),
+                        "macd_hist": (sigmap.get(r["symbol"]) or {}).get("macd_hist"),
+                        "bb_upper": (sigmap.get(r["symbol"]) or {}).get("bb_upper"),
+                        "bb_lower": (sigmap.get(r["symbol"]) or {}).get("bb_lower"),
                     }
                     for r in latest
                 ],
@@ -188,6 +196,15 @@ PAGE = r"""<!doctype html>
   .sig.SELL{background:#2d1214;color:#f85149}
   .sig.HOLD{background:#2a2410;color:#d29922}
   .sig.NEUTRAL{background:#1c2430;color:#8b98a9}
+  .ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .ctl label{font-size:11px;color:var(--mut);display:flex;align-items:center;gap:4px}
+  .ctl input[type=number]{width:52px;background:var(--card);border:1px solid var(--line);
+        color:var(--fg);border-radius:6px;padding:4px 6px;font-size:12px;outline:none}
+  .ctl input:focus{border-color:var(--accent)}
+  .ctl select{background:var(--card);border:1px solid var(--line);color:var(--fg);
+        border-radius:6px;padding:4px 8px;font-size:12px;outline:none}
+  .ctl .reset{background:none;border:1px solid var(--line);color:var(--mut);
+        border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer}
   .fresh{color:var(--ok)}.stale{color:var(--warn)}.old{color:var(--bad)}
   .btns{display:flex;gap:6px}
   .btns button{background:var(--card);border:1px solid var(--line);color:var(--mut);
@@ -216,6 +233,19 @@ PAGE = r"""<!doctype html>
     <div>
       <div class="row"><h2>Symbols</h2><span class="spacer"></span>
         <input id="filter" placeholder="filter…" autocomplete="off"></div>
+      <div class="ctl">
+        <label>signal
+          <select id="sigfilter">
+            <option value="ALL">all</option><option value="BUY">buy</option>
+            <option value="SELL">sell</option><option value="HOLD">hold</option>
+            <option value="NEUTRAL">neutral</option></select></label>
+        <span class="spacer"></span>
+        <label title="RSI below = oversold vote (buy)">RSI oversold <input type="number" id="rsiLo" min="1" max="99"></label>
+        <label title="RSI above = overbought vote (sell)">overbought <input type="number" id="rsiHi" min="1" max="99"></label>
+        <label title="score >= this = BUY">BUY&ge; <input type="number" id="buyCut" min="1" max="5"></label>
+        <label title="score <= this = SELL">SELL&le; <input type="number" id="sellCut" min="-5" max="-1"></label>
+        <button class="reset" id="reset">reset</button>
+      </div>
       <div class="panel" style="padding:4px 8px">
         <table><thead><tr><th>Sym</th><th>Last</th><th>Chg%</th><th>Signal</th>
           <th>RSI</th><th>Trend</th><th>Age</th></tr></thead><tbody id="rows"></tbody></table>
@@ -238,6 +268,23 @@ PAGE = r"""<!doctype html>
 <script>
 const $=s=>document.querySelector(s);
 let selected=null, sparks={}, limit=300, filter="", lastBars=[];
+
+// Client-side signal tuner — re-scores from raw indicators, no server round-trip.
+const DEF={rsiLo:30,rsiHi:70,buy:2,sell:-2,filter:'ALL'};
+let cfg=Object.assign({},DEF,JSON.parse(localStorage.getItem('sigcfg')||'{}'));
+function saveCfg(){localStorage.setItem('sigcfg',JSON.stringify(cfg));}
+
+function recompute(b){
+  let votes=0,used=0;
+  const v=(up,dn)=>{used++;votes+=up?1:(dn?-1:0);};
+  if(b.sma20!=null&&b.sma50!=null) v(b.sma20>b.sma50,b.sma20<b.sma50);
+  if(b.ema12!=null&&b.ema26!=null) v(b.ema12>b.ema26,b.ema12<b.ema26);
+  if(b.rsi!=null) v(b.rsi<cfg.rsiLo,b.rsi>cfg.rsiHi);
+  if(b.macd_hist!=null) v(b.macd_hist>0,b.macd_hist<0);
+  if(b.bb_lower!=null&&b.bb_upper!=null&&b.close!=null) v(b.close<b.bb_lower,b.close>b.bb_upper);
+  if(used===0) return{score:null,label:'NEUTRAL'};
+  return{score:votes,label:votes>=cfg.buy?'BUY':votes<=cfg.sell?'SELL':'HOLD'};
+}
 
 function age(s){if(s==null)return['—',''];const m=s/60;
   if(m<2)return[Math.round(s)+'s','fresh'];
@@ -298,17 +345,20 @@ function renderRows(){
     const chg=(sv.length>=2 && b.open)?((b.close-b.open)/b.open*100):null;
     const chgTxt=chg==null?'—':(chg>=0?'+':'')+chg.toFixed(2)+'%';
     const isC=b.symbol.includes('/');
-    const sig=b.signal||'NEUTRAL';
+    const {label:sig,score}=recompute(b);
     const rsi=b.rsi!=null?b.rsi.toFixed(0):'—';
-    return `<tr data-sym="${b.symbol}" class="${b.symbol===selected?'sel':''}">
+    const title=score!=null?`score ${score}`:'no indicators yet';
+    return {sig, html:`<tr data-sym="${b.symbol}" class="${b.symbol===selected?'sel':''}">
       <td><b>${b.symbol}</b><span class="tag ${isC?'c':'s'}">${isC?'CRYPTO':'STOCK'}</span></td>
       <td>${b.close!=null?b.close.toFixed(2):'—'}</td>
       <td class="chg ${chg>=0?'up':'down'}">${chgTxt}</td>
-      <td><span class="sig ${sig}">${sig}</span></td>
+      <td><span class="sig ${sig}" title="${title}">${sig}</span></td>
       <td class="muted">${rsi}</td>
       <td>${sparkSVG(sv)}</td>
-      <td class="${c}">${t}</td></tr>`;}).join('');
-  $('#rows').innerHTML=rows||'<tr><td colspan="7" class="muted">No matching symbols.</td></tr>';
+      <td class="${c}">${t}</td></tr>`};})
+    .filter(r=>cfg.filter==='ALL'||r.sig===cfg.filter)
+    .map(r=>r.html).join('');
+  $('#rows').innerHTML=rows||'<tr><td colspan="7" class="muted">No symbols match.</td></tr>';
   document.querySelectorAll('#rows tr[data-sym]').forEach(tr=>
     tr.onclick=()=>{selected=tr.dataset.sym;
       document.querySelectorAll('#rows tr').forEach(x=>x.classList.remove('sel'));
@@ -351,6 +401,18 @@ function attachHover(svg,p,X,Y){
   svg.onmouseleave=()=>$('#tt').style.display='none';}
 
 $('#filter').oninput=e=>{filter=e.target.value;renderRows();};
+
+// Signal tuner wiring
+function syncInputs(){$('#rsiLo').value=cfg.rsiLo;$('#rsiHi').value=cfg.rsiHi;
+  $('#buyCut').value=cfg.buy;$('#sellCut').value=cfg.sell;$('#sigfilter').value=cfg.filter;}
+function bindNum(id,key,lo,hi){$('#'+id).onchange=e=>{
+  let n=parseInt(e.target.value,10);if(isNaN(n))n=DEF[key];
+  n=Math.max(lo,Math.min(hi,n));cfg[key]=n;e.target.value=n;saveCfg();renderRows();};}
+bindNum('rsiLo','rsiLo',1,99);bindNum('rsiHi','rsiHi',1,99);
+bindNum('buyCut','buy',1,5);bindNum('sellCut','sell',-5,-1);
+$('#sigfilter').onchange=e=>{cfg.filter=e.target.value;saveCfg();renderRows();};
+$('#reset').onclick=()=>{cfg=Object.assign({},DEF);saveCfg();syncInputs();renderRows();};
+syncInputs();
 document.querySelectorAll('#ranges button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#ranges button').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');limit=+b.dataset.n;drawChart();});
