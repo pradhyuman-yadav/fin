@@ -1,0 +1,12 @@
+# Central TimescaleDB image for Portainer: HA image + our schema baked in.
+# Built by deploy/timescale.portainer.yml. Baking avoids bind mounts, which do
+# not work in Portainer Git stacks (host cannot reach the cloned repo files).
+#
+# Build context is the repo root (see docker-compose build.context: ..), so the
+# COPY paths are repo-relative. Prefixes 50_/51_/52_ run AFTER the HA image's
+# own init scripts (000/001/010), on a fresh data volume only.
+FROM timescale/timescaledb-ha:pg18
+
+COPY db/init/01_init.sql      /docker-entrypoint-initdb.d/50_init.sql
+COPY db/init/02_signals.sql   /docker-entrypoint-initdb.d/51_signals.sql
+COPY db/init/03_watchlist.sql /docker-entrypoint-initdb.d/52_watchlist.sql
