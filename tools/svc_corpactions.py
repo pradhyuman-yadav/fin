@@ -83,12 +83,15 @@ def main():
         return
     while True:
         t0 = time.monotonic()
+        sleep_for = args.interval
         try:
             cycle()
         except Exception as exc:  # noqa: BLE001
             print(f"cycle error: {exc}", flush=True)
             beat("error", str(exc)[:200])
-        time.sleep(max(0.0, args.interval - (time.monotonic() - t0)))
+            # Don't wait a full day to retry after a failure.
+            sleep_for = min(args.interval, 3600.0)
+        time.sleep(max(0.0, sleep_for - (time.monotonic() - t0)))
 
 
 if __name__ == "__main__":

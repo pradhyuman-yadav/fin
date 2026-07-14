@@ -40,6 +40,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: bars_stock
+      HEARTBEAT_MAX_AGE: "150"
     command: ["python", "tools/svc_stream.py", "--market", "stock"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "120"]
@@ -55,6 +56,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: bars_crypto
+      HEARTBEAT_MAX_AGE: "150"
     command: ["python", "tools/svc_stream.py", "--market", "crypto"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "120"]
@@ -70,6 +72,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: signals
+      HEARTBEAT_MAX_AGE: "180"
     command: ["python", "tools/signals.py", "--interval", "60"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "180"]
@@ -85,6 +88,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: calendar
+      HEARTBEAT_MAX_AGE: "900"
     command: ["python", "tools/svc_calendar.py", "--interval", "300"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "900"]
@@ -100,6 +104,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: corpactions
+      HEARTBEAT_MAX_AGE: "172800"
     command: ["python", "tools/svc_corpactions.py", "--interval", "86400"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "172800"]
@@ -115,6 +120,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
       SERVICE_NAME: news
+      HEARTBEAT_MAX_AGE: "2700"
     command: ["python", "tools/svc_news.py", "--interval", "900"]
     healthcheck:
       test: ["CMD", "python", "tools/heartbeat.py", "check", "2700"]

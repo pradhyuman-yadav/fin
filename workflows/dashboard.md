@@ -22,11 +22,20 @@ Visualise pipeline health and stored data to confirm the platform is working.
 3. Open http://localhost:8000.
 
 ## What it shows
-- KPI cards: rows, fresh count, latest-bar age, bars ingested in the last hour,
-  retention window, TimescaleDB version + query latency, Postgres version.
-- Per-symbol table: last price, intraday change %, sparkline, volume, freshness.
-  Filter box; click a row to chart. Approx US market open/closed indicator.
-- OHLC candlestick + volume chart with range buttons (60/120/300/all) and hover.
+- Services strip: per-microservice heartbeat (green/amber/red against each
+  service's own expected cadence via HEARTBEAT_MAX_AGE).
+- KPI cards: rows, fresh count, latest-bar age, ingest rate, retention,
+  DB latency, TimescaleDB + Postgres versions.
+- Per-symbol table: last price, per-bar change %, signal + RSI, sparkline,
+  freshness. Filter box + signal tuner; click a row to chart + filter news.
+- OHLC candlestick + volume chart with range buttons and hover tooltip.
+- Latest headlines panel (from the news service), filtered by selected symbol.
+- Market open/closed pill driven by the live Alpaca clock (market_clock table),
+  falling back to an approximate schedule if stale.
+- Built-in explainer: the "? how this works" button opens in-page documentation
+  covering the data flow, every panel, and the signal-vote logic.
+
+Served by waitress (production WSGI) when installed; Flask dev server otherwise.
 
 ## Endpoints
 - `GET /api/status` — health, KPIs, latest bar per symbol (JSON).

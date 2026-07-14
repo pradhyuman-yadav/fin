@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import websockets
 
-import alpaca  # noqa: F401 - triggers load_dotenv and exposes FEED / CRYPTO_LOC
+import alpaca  # loads .env; provides FEED / CRYPTO_LOC for url_for()
 from alpaca_ingest import UPSERT
 from db import connect
 from heartbeat import beat
@@ -24,6 +24,8 @@ from heartbeat import beat
 KEY = os.getenv("ALPACA_API_KEY_ID", "")
 SECRET = os.getenv("ALPACA_API_SECRET_KEY", "")
 STREAM_BASE = os.getenv("ALPACA_STREAM_URL", "wss://stream.data.alpaca.markets")
+FREE_STOCK_STREAM_CAP = 30  # Alpaca free tier: max symbols on the stock stream
+WATCHLIST_POLL_S = 60  # how often to re-check the watchlist for changes
 
 
 def url_for(market):
@@ -46,35 +48,56 @@ def _row(m):
     return (ts, m["S"], m.get("o"), m.get("h"), m.get("l"), m.get("c"), m.get("v"))
 
 
-async def _keepalive(market, n):
-    """Heartbeat while the socket is connected (bars may be sparse after hours)."""
+def _expect_ok(frame, what):
+    """Raise if an Alpaca control frame is an error (e.g. bad auth, sub limit)."""
+    msgs = json.loads(frame) if isinstance(frame, (str, bytes)) else frame
+    for m in msgs:
+        if m.get("T") == "error":
+            raise RuntimeError(f"{what} failed: code={m.get('code')} {m.get('msg')}")
+    return msgs
+
+
+async def _watchdog(ws, market, symbols):
+    """Heartbeat while connected; close the socket if the watchlist changed so
+    the outer loop reconnects with the new symbol set."""
     while True:
-        await asyncio.sleep(30)
-        beat("ok", f"streaming {n} {market} bars")
+        await asyncio.sleep(WATCHLIST_POLL_S)
+        beat("ok", f"streaming {len(symbols)} {market} bars")
+        try:
+            current = await asyncio.to_thread(load_symbols, market)
+        except Exception as exc:  # noqa: BLE001 - DB blip; keep streaming
+            print(f"watchlist check failed (keeping stream): {exc}", flush=True)
+            continue
+        if set(current) != set(symbols):
+            print(f"watchlist changed ({len(symbols)} -> {len(current)}), resubscribing", flush=True)
+            await ws.close()
+            return
 
 
 async def run(market):
     if not KEY or not SECRET:
         sys.exit("Missing Alpaca credentials.")
-    symbols = load_symbols(market)
-    if not symbols:
-        while True:
-            beat("ok", f"no active {market} symbols")
-            await asyncio.sleep(30)
     url = url_for(market)
     while True:
         try:
+            symbols = load_symbols(market)
+            if not symbols:
+                beat("ok", f"no active {market} symbols")
+                await asyncio.sleep(WATCHLIST_POLL_S)
+                continue
+            if market == "stock" and len(symbols) > FREE_STOCK_STREAM_CAP:
+                print(f"WARNING: {len(symbols)} stock symbols exceeds the free-tier "
+                      f"stream cap of {FREE_STOCK_STREAM_CAP}; Alpaca may reject the "
+                      "subscription", flush=True)
             async with websockets.connect(url, ping_interval=20, max_size=2 ** 23) as ws:
-                await ws.recv()  # {"T":"success","msg":"connected"}
+                _expect_ok(await ws.recv(), "connect")
                 await ws.send(json.dumps({"action": "auth", "key": KEY, "secret": SECRET}))
-                auth = json.loads(await ws.recv())
-                if not (auth and auth[0].get("T") == "success"):
-                    raise RuntimeError(f"auth failed: {auth}")
+                _expect_ok(await ws.recv(), "auth")
                 await ws.send(json.dumps({"action": "subscribe", "bars": symbols}))
-                await ws.recv()  # subscription confirmation
+                _expect_ok(await ws.recv(), "subscribe")
                 beat("ok", f"subscribed {len(symbols)} {market} bars")
                 print(f"streaming {len(symbols)} {market} bars from {url}", flush=True)
-                ka = asyncio.create_task(_keepalive(market, len(symbols)))
+                wd = asyncio.create_task(_watchdog(ws, market, symbols))
                 try:
                     async for raw in ws:
                         msgs = json.loads(raw)
@@ -83,7 +106,7 @@ async def run(market):
                             with connect() as conn, conn.cursor() as cur:
                                 cur.executemany(UPSERT, rows)
                 finally:
-                    ka.cancel()
+                    wd.cancel()
         except Exception as exc:  # noqa: BLE001
             print(f"{market} stream error, reconnecting in 5s: {exc}", flush=True)
             beat("reconnecting", str(exc)[:150])

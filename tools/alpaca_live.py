@@ -176,7 +176,11 @@ def main():
     try:
         while True:
             start = time.monotonic()
-            cycle(symbols, limiter)
+            try:
+                cycle(symbols, limiter)
+            except Exception as exc:  # noqa: BLE001 - keep polling through blips
+                print(f"cycle error: {exc}", flush=True)
+                beat("error", str(exc)[:200])
             elapsed = time.monotonic() - start
             time.sleep(max(0.0, args.interval - elapsed))
     except KeyboardInterrupt:

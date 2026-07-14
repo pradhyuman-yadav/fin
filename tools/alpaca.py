@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -23,9 +24,16 @@ def headers():
     return {"APCA-API-KEY-ID": _KEY, "APCA-API-SECRET-KEY": _SECRET}
 
 
-def get(url, params=None, timeout=30):
-    """GET JSON, raising on non-200."""
-    resp = requests.get(url, headers=headers(), params=params or {}, timeout=timeout)
-    if resp.status_code != 200:
+def get(url, params=None, timeout=30, retries=2):
+    """GET JSON, raising on non-200. Retries 429 (rate limit) and 5xx with backoff."""
+    for attempt in range(retries + 1):
+        resp = requests.get(url, headers=headers(), params=params or {}, timeout=timeout)
+        if resp.status_code == 200:
+            return resp.json()
+        retryable = resp.status_code == 429 or resp.status_code >= 500
+        if retryable and attempt < retries:
+            wait = int(resp.headers.get("Retry-After", 0) or 0) or (2 ** attempt * 3)
+            print(f"  {resp.status_code} from {url}, retrying in {wait}s", flush=True)
+            time.sleep(wait)
+            continue
         raise RuntimeError(f"{url} -> {resp.status_code}: {resp.text[:200]}")
-    return resp.json()

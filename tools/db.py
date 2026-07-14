@@ -23,7 +23,7 @@ DATABASE_URL = os.getenv(
 @contextmanager
 def connect():
     """Yield a psycopg connection; commits on exit, rolls back on error."""
-    conn = psycopg.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL, connect_timeout=10)
     try:
         yield conn
         conn.commit()

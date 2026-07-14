@@ -129,32 +129,41 @@ def score_signal(v):
     return votes, label
 
 
-def compute_all():
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT symbol FROM market_ohlcv")
-        symbols = [r[0] for r in cur.fetchall()]
+def _symbols(cur):
+    """Active watchlist symbols; falls back to every symbol with bars if the
+    watchlist table is missing or empty."""
+    try:
+        cur.execute("SELECT symbol FROM watchlist WHERE active ORDER BY symbol")
+        syms = [r[0] for r in cur.fetchall()]
+        if syms:
+            return syms
+    except Exception:  # noqa: BLE001 - watchlist may not exist on older DBs
+        cur.connection.rollback()
+    cur.execute("SELECT DISTINCT symbol FROM market_ohlcv")
+    return [r[0] for r in cur.fetchall()]
 
+
+def compute_all():
     rows = []
-    for sym in symbols:
-        with connect() as conn, conn.cursor() as cur:
+    # One connection/transaction for the whole cycle: reads + the final upsert.
+    with connect() as conn, conn.cursor() as cur:
+        for sym in _symbols(cur):
             cur.execute(
                 "SELECT time, close FROM market_ohlcv WHERE symbol=%s "
                 "ORDER BY time DESC LIMIT %s",
                 (sym, LOOKBACK),
             )
             data = cur.fetchall()
-        if not data:
-            continue
-        data = data[::-1]  # ascending by time
-        closes = [float(r[1]) for r in data]
-        last_time = data[-1][0]
-        vals = {k: _clean(x) for k, x in indicators(closes).items()}
-        score, label = score_signal(vals)
-        rows.append({"time": last_time, "symbol": sym, "score": score,
-                     "signal": label, **vals})
-
-    if rows:
-        with connect() as conn, conn.cursor() as cur:
+            if not data:
+                continue
+            data = data[::-1]  # ascending by time
+            closes = [float(r[1]) for r in data]
+            last_time = data[-1][0]
+            vals = {k: _clean(x) for k, x in indicators(closes).items()}
+            score, label = score_signal(vals)
+            rows.append({"time": last_time, "symbol": sym, "score": score,
+                         "signal": label, **vals})
+        if rows:
             cur.executemany(UPSERT, rows)
     counts = {}
     for r in rows:
@@ -176,7 +185,11 @@ def main():
     try:
         while True:
             start = time.monotonic()
-            compute_all()
+            try:
+                compute_all()
+            except Exception as exc:  # noqa: BLE001 - keep the service alive
+                print(f"cycle error: {exc}", flush=True)
+                beat("error", str(exc)[:200])
             time.sleep(max(0.0, args.interval - (time.monotonic() - start)))
     except KeyboardInterrupt:
         print("\nStopped.", flush=True)
