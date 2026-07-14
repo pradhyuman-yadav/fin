@@ -32,9 +32,15 @@ services:
       # The HA image ships its OWN init scripts (000_install_timescaledb,
       # 001_tune, 010_toolkit) in this dir. Do NOT mount over the whole dir --
       # that clobbers them. Mount our SQL as individual files with a prefix
-      # (50_/51_) so they run AFTER the image's scripts, on a fresh volume only.
-      - ./db/init/01_init.sql:/docker-entrypoint-initdb.d/50_init.sql:ro
-      - ./db/init/02_signals.sql:/docker-entrypoint-initdb.d/51_signals.sql:ro
+      # (50_/51_/52_) so they run AFTER the image's scripts, on a fresh volume only.
+      #
+      # Paths are ../db/init because THIS compose file lives in deploy/ and
+      # Docker resolves relative bind mounts against the compose file's folder.
+      # If a source path is wrong, Docker silently creates an empty DIRECTORY at
+      # the target and psql fails with "Is a directory".
+      - ../db/init/01_init.sql:/docker-entrypoint-initdb.d/50_init.sql:ro
+      - ../db/init/02_signals.sql:/docker-entrypoint-initdb.d/51_signals.sql:ro
+      - ../db/init/03_watchlist.sql:/docker-entrypoint-initdb.d/52_watchlist.sql:ro
     networks:
       - fin_net
     healthcheck:
