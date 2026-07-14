@@ -12,7 +12,7 @@
 
 services:
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:latest-pg18
     container_name: fin_timescaledb
     restart: unless-stopped
     environment:
