@@ -100,6 +100,22 @@ def status():
         return jsonify({"ok": False, "error": str(exc)}), 503
 
 
+@app.get("/api/health")
+def health_svc():
+    try:
+        rows = _q(
+            "SELECT service, status, detail, last_run, "
+            "EXTRACT(EPOCH FROM now()-last_run) AS age_s FROM service_health ORDER BY service"
+        )
+        return jsonify({"ok": True, "services": [
+            {"service": r["service"], "status": r["status"], "detail": r["detail"],
+             "age_s": float(r["age_s"]) if r["age_s"] is not None else None}
+            for r in rows
+        ]})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 503
+
+
 @app.get("/api/sparklines")
 def sparklines():
     n = min(int(request.args.get("n", 30)), 200)
@@ -212,6 +228,14 @@ PAGE = r"""<!doctype html>
   .btns button.on{color:var(--fg);border-color:var(--accent)}
   svg text{fill:var(--mut);font-size:10px}
   .err{background:#2d1214;border:1px solid var(--bad);color:#ffb4ae;padding:12px;border-radius:10px}
+  .svcs{display:flex;gap:10px;flex-wrap:wrap}
+  .svc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:120px}
+  .svc .n{font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .svc .d{font-size:11px;color:var(--mut);margin-top:3px}
+  .svc .dot{width:8px;height:8px;border-radius:50%}
+  .svc.ok .dot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .svc.warn .dot{background:var(--warn)}
+  .svc.bad .dot{background:var(--bad);box-shadow:0 0 6px var(--bad)}
   .spark{width:80px;height:22px;vertical-align:middle}
   #tt{position:fixed;pointer-events:none;background:#0b0f14;border:1px solid var(--line);
       border-radius:6px;padding:6px 8px;font-size:12px;display:none;z-index:9}
@@ -227,6 +251,7 @@ PAGE = r"""<!doctype html>
 </header>
 <main>
   <div id="err"></div>
+  <section><h2>Services</h2><div class="svcs" id="services"></div></section>
   <div class="cards" id="cards"></div>
 
   <section class="grid2">
@@ -306,7 +331,21 @@ function sparkSVG(vals){
   const up=vals[vals.length-1]>=vals[0];
   return `<svg class="spark" viewBox="0 0 80 22"><polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/></svg>`;}
 
+async function renderHealth(){
+  let h; try{h=await (await fetch('/api/health')).json();}catch(e){h={ok:false};}
+  const box=$('#services');
+  if(!h.ok || !h.services || !h.services.length){box.innerHTML='<div class="svc"><div class="n muted">no service heartbeats yet</div></div>';return;}
+  box.innerHTML=h.services.map(s=>{
+    const [t,c]=age(s.age_s);
+    // stale if older than 3 min, bad if error status or >10 min
+    let cls = s.status==='error' ? 'bad' : (s.age_s>600?'bad':(s.age_s>180?'warn':'ok'));
+    return `<div class="svc ${cls}"><div class="n"><span class="dot"></span>${s.service}</div>
+      <div class="d">${s.status||'?'} · ${t} ago</div>
+      <div class="d">${(s.detail||'').slice(0,42)}</div></div>`;}).join('');
+}
+
 async function refresh(){
+  renderHealth();
   let d; try{d=await (await fetch('/api/status')).json();}catch(e){d={ok:false,error:e.message};}
   const err=$('#err');
   if(!d.ok){err.innerHTML='<div class="err">DB unreachable: '+(d.error||'?')+'</div>';

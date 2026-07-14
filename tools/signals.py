@@ -18,6 +18,7 @@ import time
 from datetime import datetime, timezone
 
 from db import connect
+from heartbeat import beat
 
 LOOKBACK = 200  # bars pulled per symbol; enough to warm SMA50 / MACD.
 
@@ -159,6 +160,7 @@ def compute_all():
     for r in rows:
         counts[r["signal"]] = counts.get(r["signal"], 0) + 1
     stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    beat("ok", f"{len(rows)} symbols {counts}")
     print(f"[{stamp}] signals for {len(rows)} symbols {counts}", flush=True)
     return len(rows)
 

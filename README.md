@@ -33,14 +33,32 @@ cp .env.example .env    # add ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY
 docker compose up -d --build
 ```
 
-Starts three services (all `restart: unless-stopped`):
+Microservices — one concern each, own container, own logs, own healthcheck
+(all `restart: unless-stopped`):
 
-| Service | Container | Role |
-|---------|-----------|------|
-| `timescaledb` | `fin_timescaledb` | TimescaleDB, port 5432, 365-day retention |
-| `poller` | `fin_poller` | polls Alpaca latest 1-min bars → `market_ohlcv` |
-| `signals` | `fin_signals` | computes indicators → `market_signals` (BUY/SELL/HOLD) |
-| `dashboard` | `fin_dashboard` | monitoring UI at http://localhost:8000 |
+| Service | Container | Role | Writes |
+|---------|-----------|------|--------|
+| `timescaledb` | `fin_timescaledb` | TimescaleDB, 365-day retention | — |
+| `bars` | `fin_bars` | poll Alpaca 1-min bars (stock+crypto) | `market_ohlcv` |
+| `signals` | `fin_signals` | technical indicators → BUY/SELL/HOLD | `market_signals` |
+| `calendar` | `fin_calendar` | market clock + trading calendar | `market_clock`, `market_calendar` |
+| `corpactions` | `fin_corpactions` | dividends/splits (daily) | `corporate_actions` |
+| `news` | `fin_news` | latest headlines | `news` |
+| `dashboard` | `fin_dashboard` | monitoring UI at http://localhost:8000 | — |
+
+Each service heartbeats into `service_health`; the dashboard shows a live
+**Services** strip (status + last-run per service), and Docker healthchecks
+mark containers healthy/unhealthy in Portainer.
+
+## Deploy to Portainer (central DB)
+
+Two stacks, deployed from this repo (Git), sharing an external `fin_net` network:
+
+1. `deploy/timescale.portainer.yml` — the central TimescaleDB (built image, schema baked in).
+2. `deploy/app.portainer.yml` — the microservices above, pointing at `fin_timescaledb`.
+
+Set stack env vars in Portainer: `POSTGRES_PASSWORD`, `ALPACA_API_KEY_ID`,
+`ALPACA_API_SECRET_KEY`. No `.env` file and no n8n required.
 
 Watch: `docker compose ps`, `docker compose logs -f poller`.
 

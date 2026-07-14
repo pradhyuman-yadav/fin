@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 from alpaca_ingest import UPSERT  # reuse the upsert SQL
 from db import connect
+from heartbeat import beat
 
 load_dotenv()
 
@@ -137,6 +138,7 @@ def cycle(symbols, limiter):
         with connect() as conn, conn.cursor() as cur:
             cur.executemany(UPSERT, rows)
     stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    beat("ok", f"{len(rows)}/{len(symbols)} symbols")
     print(f"[{stamp}] upserted {len(rows)}/{len(symbols)} symbols", flush=True)
     return len(rows)
 

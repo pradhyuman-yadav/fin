@@ -1,44 +1,35 @@
-# Local dev stack: TimescaleDB + all Python microservices against the LOCAL db.
-# For the central Portainer deployment (services -> central db) see
-# deploy/app.portainer.yml.
+# fin app microservices for Portainer. Deploy AFTER the timescale stack.
+# Portainer -> Stacks -> Add stack -> Repository, compose path: deploy/app.portainer.yml
+#
+# Prereqs:
+#   - fin_net network exists and the central DB (fin_timescaledb) is on it.
+#   - Stack env vars set in the Portainer editor:
+#       POSTGRES_PASSWORD, ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY
+#     (optional: POSTGRES_USER, POSTGRES_DB, ALPACA_FEED, DASHBOARD_PORT)
+#
+# Images are BUILT from the repo (bind mounts don't work in Portainer git
+# stacks); build context is the repo root, Dockerfile bakes tools/ + config/.
 
 x-service: &svc
-  build: .
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: fin-app:local
   restart: unless-stopped
-  env_file: .env
-  volumes:
-    - ./tools:/app/tools:ro
-    - ./config:/app/config:ro
-  depends_on:
-    timescaledb:
-      condition: service_healthy
+  networks: [fin_net]
+
+x-env: &env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD}@fin_timescaledb:5432/${POSTGRES_DB:-fin}
+  ALPACA_API_KEY_ID: ${ALPACA_API_KEY_ID}
+  ALPACA_API_SECRET_KEY: ${ALPACA_API_SECRET_KEY}
+  ALPACA_FEED: ${ALPACA_FEED:-iex}
 
 services:
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    container_name: fin_timescaledb
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fin_dev_pw}
-      POSTGRES_DB: ${POSTGRES_DB:-fin}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - timescale_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fin} -d ${POSTGRES_DB:-fin}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # Bars: poll latest 1-min bars (stock + crypto) -> market_ohlcv
   bars:
     <<: *svc
     container_name: fin_bars
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: bars
     command: ["python", "tools/alpaca_live.py", "--interval", "60"]
     healthcheck:
@@ -48,12 +39,11 @@ services:
       retries: 3
       start_period: 40s
 
-  # Signals: compute indicators -> market_signals
   signals:
     <<: *svc
     container_name: fin_signals
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: signals
     command: ["python", "tools/signals.py", "--interval", "60"]
     healthcheck:
@@ -63,12 +53,11 @@ services:
       retries: 3
       start_period: 40s
 
-  # Calendar: market clock + trading calendar -> market_clock, market_calendar
   calendar:
     <<: *svc
     container_name: fin_calendar
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: calendar
     command: ["python", "tools/svc_calendar.py", "--interval", "300"]
     healthcheck:
@@ -78,12 +67,11 @@ services:
       retries: 3
       start_period: 40s
 
-  # Corporate actions: dividends/splits -> corporate_actions (daily)
   corpactions:
     <<: *svc
     container_name: fin_corpactions
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: corpactions
     command: ["python", "tools/svc_corpactions.py", "--interval", "86400"]
     healthcheck:
@@ -93,12 +81,11 @@ services:
       retries: 3
       start_period: 60s
 
-  # News: latest headlines -> news
   news:
     <<: *svc
     container_name: fin_news
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: news
     command: ["python", "tools/svc_news.py", "--interval", "900"]
     healthcheck:
@@ -108,12 +95,11 @@ services:
       retries: 3
       start_period: 40s
 
-  # Dashboard: read-only monitoring UI at http://localhost:8000
   dashboard:
     <<: *svc
     container_name: fin_dashboard
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+      <<: *env
       SERVICE_NAME: dashboard
     command: ["python", "tools/dashboard.py", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -125,5 +111,6 @@ services:
       retries: 3
       start_period: 20s
 
-volumes:
-  timescale_data:
+networks:
+  fin_net:
+    external: true
