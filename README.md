@@ -39,6 +39,7 @@ Starts three services (all `restart: unless-stopped`):
 |---------|-----------|------|
 | `timescaledb` | `fin_timescaledb` | TimescaleDB, port 5432, 365-day retention |
 | `poller` | `fin_poller` | polls Alpaca latest 1-min bars → `market_ohlcv` |
+| `signals` | `fin_signals` | computes indicators → `market_signals` (BUY/SELL/HOLD) |
 | `dashboard` | `fin_dashboard` | monitoring UI at http://localhost:8000 |
 
 Watch: `docker compose ps`, `docker compose logs -f poller`.

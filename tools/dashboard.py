@@ -53,6 +53,11 @@ def status():
             "SELECT DISTINCT ON (symbol) symbol, time, open, high, low, close, volume, updated_at "
             "FROM market_ohlcv ORDER BY symbol, time DESC"
         )
+        sig = _q(
+            "SELECT DISTINCT ON (symbol) symbol, signal, score, rsi14 "
+            "FROM market_signals ORDER BY symbol, time DESC"
+        )
+        sigmap = {r["symbol"]: r for r in sig}
         latency = round((time.monotonic() - t0) * 1000, 1)
         return jsonify(
             {
@@ -75,6 +80,9 @@ def status():
                         "open": r["open"], "high": r["high"], "low": r["low"],
                         "close": r["close"], "volume": r["volume"],
                         "updated_at": r["updated_at"].isoformat(),
+                        "signal": (sigmap.get(r["symbol"]) or {}).get("signal"),
+                        "score": (sigmap.get(r["symbol"]) or {}).get("score"),
+                        "rsi": (sigmap.get(r["symbol"]) or {}).get("rsi14"),
                     }
                     for r in latest
                 ],
@@ -175,6 +183,11 @@ PAGE = r"""<!doctype html>
        letter-spacing:.04em;margin-left:6px;vertical-align:middle}
   .tag.s{background:#16283f;color:#58a6ff}
   .tag.c{background:#2b2140;color:#bd8cff}
+  .sig{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.03em}
+  .sig.BUY{background:#0f2e1a;color:#3fb950}
+  .sig.SELL{background:#2d1214;color:#f85149}
+  .sig.HOLD{background:#2a2410;color:#d29922}
+  .sig.NEUTRAL{background:#1c2430;color:#8b98a9}
   .fresh{color:var(--ok)}.stale{color:var(--warn)}.old{color:var(--bad)}
   .btns{display:flex;gap:6px}
   .btns button{background:var(--card);border:1px solid var(--line);color:var(--mut);
@@ -204,8 +217,8 @@ PAGE = r"""<!doctype html>
       <div class="row"><h2>Symbols</h2><span class="spacer"></span>
         <input id="filter" placeholder="filter…" autocomplete="off"></div>
       <div class="panel" style="padding:4px 8px">
-        <table><thead><tr><th>Sym</th><th>Last</th><th>Chg%</th><th>Trend</th>
-          <th>Vol</th><th>Age</th></tr></thead><tbody id="rows"></tbody></table>
+        <table><thead><tr><th>Sym</th><th>Last</th><th>Chg%</th><th>Signal</th>
+          <th>RSI</th><th>Trend</th><th>Age</th></tr></thead><tbody id="rows"></tbody></table>
       </div>
     </div>
     <div>
@@ -285,14 +298,17 @@ function renderRows(){
     const chg=(sv.length>=2 && b.open)?((b.close-b.open)/b.open*100):null;
     const chgTxt=chg==null?'—':(chg>=0?'+':'')+chg.toFixed(2)+'%';
     const isC=b.symbol.includes('/');
+    const sig=b.signal||'NEUTRAL';
+    const rsi=b.rsi!=null?b.rsi.toFixed(0):'—';
     return `<tr data-sym="${b.symbol}" class="${b.symbol===selected?'sel':''}">
       <td><b>${b.symbol}</b><span class="tag ${isC?'c':'s'}">${isC?'CRYPTO':'STOCK'}</span></td>
       <td>${b.close!=null?b.close.toFixed(2):'—'}</td>
       <td class="chg ${chg>=0?'up':'down'}">${chgTxt}</td>
+      <td><span class="sig ${sig}">${sig}</span></td>
+      <td class="muted">${rsi}</td>
       <td>${sparkSVG(sv)}</td>
-      <td class="muted">${b.volume!=null?b.volume.toLocaleString():'—'}</td>
       <td class="${c}">${t}</td></tr>`;}).join('');
-  $('#rows').innerHTML=rows||'<tr><td colspan="6" class="muted">No matching symbols.</td></tr>';
+  $('#rows').innerHTML=rows||'<tr><td colspan="7" class="muted">No matching symbols.</td></tr>';
   document.querySelectorAll('#rows tr[data-sym]').forEach(tr=>
     tr.onclick=()=>{selected=tr.dataset.sym;
       document.querySelectorAll('#rows tr').forEach(x=>x.classList.remove('sel'));

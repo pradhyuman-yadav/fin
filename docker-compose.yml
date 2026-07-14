@@ -35,6 +35,21 @@ services:
       timescaledb:
         condition: service_healthy
 
+  # Computes technical-indicator signals from market_ohlcv into market_signals.
+  signals:
+    build: .
+    container_name: fin_signals
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
+    command: ["python", "tools/signals.py", "--interval", "60"]
+    volumes:
+      - ./tools:/app/tools:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
   # Read-only monitoring dashboard on http://localhost:8000
   dashboard:
     build: .
