@@ -13,10 +13,9 @@ Usage:
 
 import argparse
 import math
+import statistics
 import time
 from datetime import datetime, timezone
-
-import pandas as pd
 
 from db import connect
 
@@ -49,36 +48,56 @@ def _clean(x):
     return float(x)
 
 
-def indicators(df):
-    """Return the latest-bar indicator values from an OHLCV frame (time asc)."""
-    close = df["close"].astype(float)
-    sma20 = close.rolling(20).mean()
-    sma50 = close.rolling(50).mean()
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
+def _ewm(vals, alpha):
+    """Exponentially weighted mean series (adjust=False), seeded at vals[0]."""
+    out = [vals[0]]
+    for x in vals[1:]:
+        out.append(alpha * x + (1 - alpha) * out[-1])
+    return out
 
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-    rs = gain / loss.replace(0, pd.NA)
-    rsi = 100 - 100 / (1 + rs)
 
-    macd = ema12 - ema26
-    macd_sig = macd.ewm(span=9, adjust=False).mean()
-    macd_hist = macd - macd_sig
+def _sma_last(vals, n):
+    return sum(vals[-n:]) / n if len(vals) >= n else None
 
-    bb_mid = sma20
-    bb_std = close.rolling(20).std()
-    bb_up = bb_mid + 2 * bb_std
-    bb_lo = bb_mid - 2 * bb_std
+
+def indicators(closes):
+    """Return latest-bar indicator values from a list of closes (time asc).
+
+    Pure Python — mirrors the previous pandas math (EMA/RSI use adjust=False
+    exponential smoothing seeded at the first value)."""
+    n = len(closes)
+    ema12 = _ewm(closes, 2 / 13)
+    ema26 = _ewm(closes, 2 / 27)
+    macd_series = [a - b for a, b in zip(ema12, ema26)]
+    macd_sig = _ewm(macd_series, 2 / 10)
+
+    rsi = None
+    if n >= 15:
+        gains = [max(closes[i] - closes[i - 1], 0.0) for i in range(1, n)]
+        losses = [max(closes[i - 1] - closes[i], 0.0) for i in range(1, n)]
+        avg_gain = _ewm(gains, 1 / 14)[-1]
+        avg_loss = _ewm(losses, 1 / 14)[-1]
+        if avg_loss == 0:
+            rsi = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - 100 / (1 + rs)
+
+    sma20 = _sma_last(closes, 20)
+    bb_upper = bb_lower = None
+    if sma20 is not None:
+        std = statistics.stdev(closes[-20:])  # sample std, matches pandas .std()
+        bb_upper = sma20 + 2 * std
+        bb_lower = sma20 - 2 * std
 
     return {
-        "close": close.iloc[-1],
-        "sma20": sma20.iloc[-1], "sma50": sma50.iloc[-1],
-        "ema12": ema12.iloc[-1], "ema26": ema26.iloc[-1],
-        "rsi14": rsi.iloc[-1],
-        "macd": macd.iloc[-1], "macd_signal": macd_sig.iloc[-1], "macd_hist": macd_hist.iloc[-1],
-        "bb_mid": bb_mid.iloc[-1], "bb_upper": bb_up.iloc[-1], "bb_lower": bb_lo.iloc[-1],
+        "close": closes[-1],
+        "sma20": sma20, "sma50": _sma_last(closes, 50),
+        "ema12": ema12[-1], "ema26": ema26[-1],
+        "rsi14": rsi,
+        "macd": macd_series[-1], "macd_signal": macd_sig[-1],
+        "macd_hist": macd_series[-1] - macd_sig[-1],
+        "bb_mid": sma20, "bb_upper": bb_upper, "bb_lower": bb_lower,
     }
 
 
@@ -125,10 +144,12 @@ def compute_all():
             data = cur.fetchall()
         if not data:
             continue
-        df = pd.DataFrame(data, columns=["time", "close"]).iloc[::-1].reset_index(drop=True)
-        vals = {k: _clean(x) for k, x in indicators(df).items()}
+        data = data[::-1]  # ascending by time
+        closes = [float(r[1]) for r in data]
+        last_time = data[-1][0]
+        vals = {k: _clean(x) for k, x in indicators(closes).items()}
         score, label = score_signal(vals)
-        rows.append({"time": df["time"].iloc[-1], "symbol": sym, "score": score,
+        rows.append({"time": last_time, "symbol": sym, "score": score,
                      "signal": label, **vals})
 
     if rows:
