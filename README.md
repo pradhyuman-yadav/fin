@@ -39,7 +39,8 @@ Microservices — one concern each, own container, own logs, own healthcheck
 | Service | Container | Role | Writes |
 |---------|-----------|------|--------|
 | `timescaledb` | `fin_timescaledb` | TimescaleDB, 365-day retention | — |
-| `bars` | `fin_bars` | poll Alpaca 1-min bars (stock+crypto) | `market_ohlcv` |
+| `bars_stock` | `fin_bars_stock` | real-time WebSocket bar stream (stocks) | `market_ohlcv` |
+| `bars_crypto` | `fin_bars_crypto` | real-time WebSocket bar stream (crypto) | `market_ohlcv` |
 | `signals` | `fin_signals` | technical indicators → BUY/SELL/HOLD | `market_signals` |
 | `calendar` | `fin_calendar` | market clock + trading calendar | `market_clock`, `market_calendar` |
 | `corpactions` | `fin_corpactions` | dividends/splits (daily) | `corporate_actions` |

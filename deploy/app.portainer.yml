@@ -25,15 +25,29 @@ x-env: &env
   ALPACA_FEED: ${ALPACA_FEED:-iex}
 
 services:
-  bars:
+  bars_stock:
     <<: *svc
-    container_name: fin_bars
+    container_name: fin_bars_stock
     environment:
       <<: *env
-      SERVICE_NAME: bars
-    command: ["python", "tools/alpaca_live.py", "--interval", "60"]
+      SERVICE_NAME: bars_stock
+    command: ["python", "tools/svc_stream.py", "--market", "stock"]
     healthcheck:
-      test: ["CMD", "python", "tools/heartbeat.py", "check", "180"]
+      test: ["CMD", "python", "tools/heartbeat.py", "check", "120"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bars_crypto:
+    <<: *svc
+    container_name: fin_bars_crypto
+    environment:
+      <<: *env
+      SERVICE_NAME: bars_crypto
+    command: ["python", "tools/svc_stream.py", "--market", "crypto"]
+    healthcheck:
+      test: ["CMD", "python", "tools/heartbeat.py", "check", "120"]
       interval: 30s
       timeout: 10s
       retries: 3
