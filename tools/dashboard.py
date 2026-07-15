@@ -648,8 +648,9 @@ function renderRows(){
     const chgTxt=chg==null?'—':(chg>=0?'+':'')+chg.toFixed(2)+'%';
     const chgCls=chg==null?'':(chg>=0?'up':'down');
     const isC=b.symbol.includes('/');
-    let ageTitle='';
-    if(!isC && !open && c!=='fresh'){c='muted';ageTitle='market closed — stock bars resume at next open';}
+    const wAge=age((Date.now()-new Date(b.updated_at))/1000)[0];
+    let ageTitle=`bar time ${b.time.replace('T',' ').slice(0,16)} UTC · row last written ${wAge} ago`;
+    if(!isC && !open && c!=='fresh'){c='muted';ageTitle+=' · market closed — resumes at next open';}
     const mh=b.macd_hist;
     return `<tr data-sym="${esc(b.symbol)}" class="${b.symbol===selected?'sel':''}">
       <td><b>${esc(b.symbol)}</b><span class="tag ${isC?'c':'s'}">${isC?'CRYPTO':'STOCK'}</span></td>
