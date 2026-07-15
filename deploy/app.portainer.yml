@@ -15,6 +15,10 @@ x-service: &svc
     context: ..
     dockerfile: Dockerfile
   image: fin-app:local
+  # fin-app:local is built here, not hosted in a registry. Without this,
+  # Portainer's "re-pull image" tries Docker Hub and fails with
+  # "pull access denied for fin-app".
+  pull_policy: build
   restart: unless-stopped
   networks: [fin_net]
 

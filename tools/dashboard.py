@@ -1,8 +1,9 @@
 """Local dashboard to monitor the fin pipeline.
 
 Read-only status page: service health, DB/TimescaleDB status, per-symbol
-latest bars with signals + sparklines, OHLC candlestick + volume chart,
-latest news headlines, and a built-in "how it works" explainer.
+latest bars with calculated indicators (RSI, MACD, SMA/EMA, Bollinger),
+OHLC candlestick + volume chart, market session info, corporate actions,
+news headlines, and a built-in "how it works" explainer.
 
 Usage:
     python tools/dashboard.py                      # http://localhost:8000
@@ -72,6 +73,25 @@ def _clock():
         return None
 
 
+def _session():
+    """Today's trading-calendar row (ET trading day); None if unavailable."""
+    try:
+        r = _q(
+            'SELECT "open" AS o, "close" AS c, session_open, session_close, settlement_date '
+            "FROM market_calendar WHERE date=(now() AT TIME ZONE 'America/New_York')::date",
+            one=True,
+        )
+        if not r:
+            return {"trading_day": False}
+        return {
+            "trading_day": True, "open": r["o"], "close": r["c"],
+            "session_open": r["session_open"], "session_close": r["session_close"],
+            "settlement": r["settlement_date"].isoformat() if r["settlement_date"] else None,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.get("/api/status")
 def status():
     t0 = time.monotonic()
@@ -96,8 +116,8 @@ def status():
             f"FROM market_ohlcv {flt} ORDER BY symbol, time DESC"
         )
         sig = _q(
-            "SELECT DISTINCT ON (symbol) symbol, signal, score, rsi14, "
-            "sma20, sma50, ema12, ema26, macd_hist, bb_upper, bb_lower "
+            "SELECT DISTINCT ON (symbol) symbol, rsi14, sma20, sma50, ema12, ema26, "
+            "macd, macd_signal, macd_hist, bb_upper, bb_mid, bb_lower "
             "FROM market_signals ORDER BY symbol, time DESC"
         )
         sigmap = {r["symbol"]: r for r in sig}
@@ -110,11 +130,13 @@ def status():
                 "open": r["open"], "high": r["high"], "low": r["low"],
                 "close": r["close"], "volume": r["volume"],
                 "updated_at": r["updated_at"].isoformat(),
-                "signal": s.get("signal"), "score": s.get("score"), "rsi": s.get("rsi14"),
+                "rsi": s.get("rsi14"),
                 "sma20": s.get("sma20"), "sma50": s.get("sma50"),
                 "ema12": s.get("ema12"), "ema26": s.get("ema26"),
+                "macd": s.get("macd"), "macd_signal": s.get("macd_signal"),
                 "macd_hist": s.get("macd_hist"),
-                "bb_upper": s.get("bb_upper"), "bb_lower": s.get("bb_lower"),
+                "bb_upper": s.get("bb_upper"), "bb_mid": s.get("bb_mid"),
+                "bb_lower": s.get("bb_lower"),
             }
 
         return jsonify(
@@ -131,6 +153,7 @@ def status():
                 "written_1h": tot["written_1h"] if tot else 0,
                 "db_latency_ms": latency,
                 "clock": _clock(),
+                "session": _session(),
                 "bars": [bar(r) for r in latest],
             }
         )
@@ -172,6 +195,27 @@ def news_api():
         ]})
     except Exception:  # noqa: BLE001 - news table optional; panel degrades
         return jsonify({"ok": False, "news": []})
+
+
+@app.get("/api/corpactions")
+def corpactions_api():
+    limit = _int_arg("limit", 20, 100)
+    try:
+        rows = _q(
+            "SELECT symbol, ca_type, ex_date, payable_date, rate, old_rate "
+            "FROM corporate_actions WHERE ex_date >= CURRENT_DATE - INTERVAL '21 days' "
+            "ORDER BY ex_date DESC LIMIT %s",
+            (limit,),
+        )
+        return jsonify({"ok": True, "actions": [
+            {"symbol": r["symbol"], "type": r["ca_type"],
+             "ex_date": r["ex_date"].isoformat() if r["ex_date"] else None,
+             "payable_date": r["payable_date"].isoformat() if r["payable_date"] else None,
+             "rate": r["rate"], "old_rate": r["old_rate"]}
+            for r in rows
+        ]})
+    except Exception:  # noqa: BLE001 - table optional; panel degrades
+        return jsonify({"ok": False, "actions": []})
 
 
 @app.get("/api/sparklines")
@@ -242,7 +286,7 @@ PAGE = r"""<!doctype html>
   .helpbtn{background:var(--card);border:1px solid var(--line);color:var(--mut);border-radius:8px;
         padding:4px 12px;font-size:12px;cursor:pointer;font-weight:600}
   .helpbtn.on{color:var(--accent);border-color:var(--accent)}
-  main{padding:22px;max-width:1200px;margin:0 auto}
+  main{padding:22px;max-width:1240px;margin:0 auto}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
   .card .k{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
@@ -255,10 +299,10 @@ PAGE = r"""<!doctype html>
         border-radius:8px;padding:6px 10px;font-size:13px;outline:none;width:160px}
   input#filter:focus{border-color:var(--accent)}
   .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-  .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
+  .grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
   @media(max-width:900px){.grid2{grid-template-columns:1fr}}
   table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-  th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th,td{text-align:right;padding:6px 7px;border-bottom:1px solid var(--line);font-size:13px}
   th:first-child,td:first-child{text-align:left}
   th{color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.04em;cursor:help}
   tbody tr{cursor:pointer}
@@ -269,20 +313,6 @@ PAGE = r"""<!doctype html>
        letter-spacing:.04em;margin-left:6px;vertical-align:middle}
   .tag.s{background:#16283f;color:#58a6ff}
   .tag.c{background:#2b2140;color:#bd8cff}
-  .sig{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.03em}
-  .sig.BUY{background:#0f2e1a;color:#3fb950}
-  .sig.SELL{background:#2d1214;color:#f85149}
-  .sig.HOLD{background:#2a2410;color:#d29922}
-  .sig.NEUTRAL{background:#1c2430;color:#8b98a9}
-  .ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-  .ctl label{font-size:11px;color:var(--mut);display:flex;align-items:center;gap:4px}
-  .ctl input[type=number]{width:52px;background:var(--card);border:1px solid var(--line);
-        color:var(--fg);border-radius:6px;padding:4px 6px;font-size:12px;outline:none}
-  .ctl input:focus{border-color:var(--accent)}
-  .ctl select{background:var(--card);border:1px solid var(--line);color:var(--fg);
-        border-radius:6px;padding:4px 8px;font-size:12px;outline:none}
-  .ctl .reset{background:none;border:1px solid var(--line);color:var(--mut);
-        border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer}
   .fresh{color:var(--ok)}.stale{color:var(--warn)}.old{color:var(--bad)}
   .btns{display:flex;gap:6px}
   .btns button{background:var(--card);border:1px solid var(--line);color:var(--mut);
@@ -298,7 +328,7 @@ PAGE = r"""<!doctype html>
   .svc.ok .dot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
   .svc.warn .dot{background:var(--warn)}
   .svc.bad .dot{background:var(--bad);box-shadow:0 0 6px var(--bad)}
-  .spark{width:80px;height:22px;vertical-align:middle}
+  .spark{width:72px;height:22px;vertical-align:middle}
   #tt{position:fixed;pointer-events:none;background:#0b0f14;border:1px solid var(--line);
       border-radius:6px;padding:6px 8px;font-size:12px;display:none;z-index:9}
   #docs{display:none;background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -318,6 +348,15 @@ PAGE = r"""<!doctype html>
   .news-item a{color:var(--fg);text-decoration:none}
   .news-item a:hover{color:var(--accent)}
   .news-item .m{color:var(--mut);font-size:11px;margin-top:1px}
+  .ind{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-top:10px}
+  .ind .i{background:#0e131a;border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+  .ind .i .k{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  .ind .i .v{font-size:14px;font-weight:600;margin-top:2px}
+  .ca-item{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .ca-item:last-child{border-bottom:none}
+  .ca-item .sym{font-weight:700;min-width:52px}
+  .ca-item .typ{color:var(--accent);font-size:11px}
+  .ca-item .fut{color:var(--ok);font-size:10px;font-weight:700;letter-spacing:.04em}
 </style></head>
 <body>
 <header>
@@ -337,50 +376,61 @@ PAGE = r"""<!doctype html>
 
     <h3>Data flow</h3>
     <div class="flow">Alpaca WebSocket ──▶ bars_stock / bars_crypto ──▶ market_ohlcv (1-min OHLCV bars)
-Alpaca REST      ──▶ calendar · corpactions · news ─▶ market_clock · corporate_actions · news
-market_ohlcv     ──▶ signals service ──▶ market_signals (indicators + BUY/SELL/HOLD)
+Alpaca REST      ──▶ calendar · corpactions · news ─▶ market_clock/calendar · corporate_actions · news
+market_ohlcv     ──▶ signals service ──▶ market_signals (calculated indicators)
 this dashboard   ──▶ reads the DB only (no writes)</div>
 
     <h3>Services strip</h3>
     <p>One card per microservice. Every service writes a heartbeat after each cycle, with its
     own expected cadence (streams ≈1&nbsp;min, calendar 5&nbsp;min, news 15&nbsp;min, corporate actions daily).
     <span class="fresh">green</span> = on schedule · <span class="stale">amber</span> = late or reconnecting ·
-    <span class="old">red</span> = errored or 2× overdue.</p>
+    <span class="old">red</span> = errored or 2× overdue. "reconnecting · connection limit" on a stream
+    means another process holds the single Alpaca stream slot for these API keys — the free tier
+    allows one connection per endpoint, so only one deployment may stream at a time.</p>
 
     <h3>KPI cards</h3>
     <table>
       <tr><th>Rows</th><td>1-min bars stored (retention drops bars older than 365 days)</td></tr>
-      <tr><th>Fresh</th><td>symbols whose latest bar is under 20 min old — crypto streams 24/7, stocks only during market hours, so stocks going grey after the close is normal</td></tr>
+      <tr><th>Fresh</th><td>symbols whose latest bar is under 20 min old — crypto streams 24/7, stocks only during market hours</td></tr>
       <tr><th>Latest bar</th><td>age of the newest bar across all symbols</td></tr>
       <tr><th>Ingested 1h</th><td>bar rows written in the last hour</td></tr>
+      <tr><th>Session</th><td>today's regular trading hours from the exchange calendar (ET)</td></tr>
       <tr><th>Latency</th><td>how long this page's DB status query took</td></tr>
     </table>
 
-    <h3>Symbols table</h3>
+    <h3>Symbols table — calculated indicators</h3>
     <table>
       <tr><th>Last</th><td>close of the newest 1-min bar</td></tr>
       <tr><th>Chg%</th><td>that bar's close vs its own open (per-bar move, not daily change)</td></tr>
-      <tr><th>Signal / RSI</th><td>from the signals service (see below)</td></tr>
+      <tr><th>RSI</th><td>RSI(14) momentum oscillator: below ~30 = oversold, above ~70 = overbought</td></tr>
+      <tr><th>MACD</th><td>MACD(12,26,9) histogram: positive = short-term momentum above its signal line, negative = below</td></tr>
+      <tr><th>SMA20 / SMA50</th><td>simple moving averages of the last 20 / 50 one-minute closes; SMA20 above SMA50 suggests a short-term uptrend</td></tr>
       <tr><th>Trend</th><td>sparkline of the last 30 closes</td></tr>
-      <tr><th>Age</th><td>bar freshness: <span class="fresh">&lt;20m</span> · <span class="stale">&lt;48h</span> · <span class="old">older</span></td></tr>
+      <tr><th>Age</th><td>bar freshness: <span class="fresh">&lt;20m</span> · <span class="stale">&lt;48h</span> · <span class="old">older</span>. Stocks show a muted age while the market is closed — that is normal, not a fault.</td></tr>
     </table>
     <p>STOCK = IEX feed (free tier: 15-min delayed, partial market volume). CRYPTO = 24/7 stream.
-    Click a row to load its candlestick chart and filter headlines.</p>
+    Click a row to load its chart, full indicator readout, and filtered headlines.
+    Indicators warm up as bars accumulate — SMA50 needs 50 minutes of data; blank means
+    not enough bars yet.</p>
 
-    <h3>Signal logic</h3>
-    <p>Five mechanical votes, each +1 (bullish) / −1 (bearish) / 0: SMA20 vs SMA50 ·
-    EMA12 vs EMA26 · RSI(14) below oversold / above overbought · MACD histogram sign ·
-    close outside Bollinger(20,2) bands. <b>score</b> = sum. BUY at ≥ +2, SELL at ≤ −2,
-    otherwise HOLD (NEUTRAL until enough bars accumulate — SMA50 needs 50 minutes of data).</p>
-    <p>The tuner above the table re-scores <i>in your browser only</i> (saved in localStorage).
-    Stored signals in the DB keep the default thresholds.</p>
+    <h3>Indicator readout (right panel)</h3>
+    <p>All calculated values for the selected symbol: RSI(14), MACD line / signal / histogram,
+    SMA(20/50), EMA(12/26), and Bollinger(20,2) upper / middle / lower bands. Values are
+    computed by the signals service each minute from stored bars.</p>
+
+    <h3>Dividends &amp; splits / Headlines</h3>
+    <p>Corporate actions (from the daily corpactions service) show recent and upcoming
+    dividends/splits for watchlist stocks — <span class="fresh">UPCOMING</span> marks ex-dates
+    from today onward. Headlines come from the news service (15-min cycle); selecting a stock
+    filters them.</p>
 
     <h3>Good to know</h3>
-    <p>All timestamps are UTC. Bars are keyed by their exchange timestamp, so re-fetches never
-    duplicate. If a stream service restarts, the minutes it was down are not auto-backfilled.
-    The market pill uses Alpaca's live clock when fresh, else an approximate schedule.</p>
+    <p>All timestamps are UTC unless marked ET. Bars are keyed by their exchange timestamp, so
+    re-fetches never duplicate. If a stream service restarts, the minutes it was down are not
+    auto-backfilled. The market pill uses Alpaca's live clock when fresh, else an approximate
+    schedule.</p>
 
-    <p class="disc">⚠ Signals are a mechanical indicator score for monitoring — not investment advice.</p>
+    <p class="disc">⚠ Indicators are mechanical calculations for monitoring — not investment advice.</p>
   </div>
 
   <div id="err"></div>
@@ -391,28 +441,17 @@ this dashboard   ──▶ reads the DB only (no writes)</div>
     <div>
       <div class="row"><h2>Symbols</h2><span class="spacer"></span>
         <input id="filter" placeholder="filter…" autocomplete="off"></div>
-      <div class="ctl">
-        <label>signal
-          <select id="sigfilter">
-            <option value="ALL">all</option><option value="BUY">buy</option>
-            <option value="SELL">sell</option><option value="HOLD">hold</option>
-            <option value="NEUTRAL">neutral</option></select></label>
-        <span class="spacer"></span>
-        <label title="RSI below this = oversold = bullish vote">RSI oversold <input type="number" id="rsiLo" min="1" max="99"></label>
-        <label title="RSI above this = overbought = bearish vote">overbought <input type="number" id="rsiHi" min="1" max="99"></label>
-        <label title="score at or above this = BUY">BUY&ge; <input type="number" id="buyCut" min="1" max="5"></label>
-        <label title="score at or below this = SELL">SELL&le; <input type="number" id="sellCut" min="-5" max="-1"></label>
-        <button class="reset" id="reset" title="restore default thresholds (30/70, +2/-2)">reset</button>
-      </div>
       <div class="panel" style="padding:4px 8px">
         <table><thead><tr>
-          <th title="Symbol. STOCK = IEX feed, CRYPTO = 24/7 stream. Click a row to chart it.">Sym</th>
+          <th title="Symbol. STOCK = IEX feed, CRYPTO = 24/7 stream. Click a row for chart + indicators.">Sym</th>
           <th title="Close of the newest 1-min bar">Last</th>
           <th title="Latest bar's close vs its own open (per-bar move)">Chg%</th>
-          <th title="Mechanical indicator score: BUY / SELL / HOLD. See 'how this works'.">Signal</th>
-          <th title="RSI(14): <30 oversold, >70 overbought (defaults)">RSI</th>
+          <th title="RSI(14): below ~30 oversold, above ~70 overbought">RSI</th>
+          <th title="MACD(12,26,9) histogram: + momentum above signal line, − below">MACD</th>
+          <th title="Simple moving average of last 20 closes">SMA20</th>
+          <th title="Simple moving average of last 50 closes">SMA50</th>
           <th title="Last 30 closes">Trend</th>
-          <th title="Age of the newest bar. Stocks pause outside market hours.">Age</th>
+          <th title="Age of the newest bar. Stocks pause outside market hours (muted).">Age</th>
         </tr></thead><tbody id="rows"></tbody></table>
       </div>
     </div>
@@ -425,7 +464,12 @@ this dashboard   ──▶ reads the DB only (no writes)</div>
       <div class="panel">
         <svg id="chart" viewBox="0 0 560 240" width="100%"></svg>
         <svg id="vol" viewBox="0 0 560 70" width="100%"></svg>
+        <div class="ind" id="ind"></div>
       </div>
+      <section>
+        <div class="row"><h2>Dividends &amp; splits</h2></div>
+        <div class="panel" id="corp"><span class="muted">loading…</span></div>
+      </section>
       <section>
         <div class="row"><h2 id="ntitle">Headlines</h2></div>
         <div class="panel" id="news"><span class="muted">loading…</span></div>
@@ -437,24 +481,14 @@ this dashboard   ──▶ reads the DB only (no writes)</div>
 <script>
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let selected=null, sparks={}, limit=300, filter="", lastBars=[], newsCache=[];
+let selected=null, sparks={}, limit=300, filter="", lastBars=[], newsCache=[], corpCache=[], lastClock=null;
 
-// Client-side signal tuner — re-scores from raw indicators, no server round-trip.
-const DEF={rsiLo:30,rsiHi:70,buy:2,sell:-2,filter:'ALL'};
-let cfg=Object.assign({},DEF,JSON.parse(localStorage.getItem('sigcfg')||'{}'));
-function saveCfg(){localStorage.setItem('sigcfg',JSON.stringify(cfg));}
-
-function recompute(b){
-  let votes=0,used=0;
-  const v=(up,dn)=>{used++;votes+=up?1:(dn?-1:0);};
-  if(b.sma20!=null&&b.sma50!=null) v(b.sma20>b.sma50,b.sma20<b.sma50);
-  if(b.ema12!=null&&b.ema26!=null) v(b.ema12>b.ema26,b.ema12<b.ema26);
-  if(b.rsi!=null) v(b.rsi<cfg.rsiLo,b.rsi>cfg.rsiHi);
-  if(b.macd_hist!=null) v(b.macd_hist>0,b.macd_hist<0);
-  if(b.bb_lower!=null&&b.bb_upper!=null&&b.close!=null) v(b.close<b.bb_lower,b.close>b.bb_upper);
-  if(used===0) return{score:null,label:'NEUTRAL'};
-  return{score:votes,label:votes>=cfg.buy?'BUY':votes<=cfg.sell?'SELL':'HOLD'};
-}
+function fmt(v){if(v==null)return '—';
+  const a=Math.abs(v);
+  if(a>=1000)return v.toFixed(0);
+  if(a>=1)return v.toFixed(2);
+  if(a===0)return '0';
+  return v.toPrecision(3);}
 
 function age(s){if(s==null)return['—',''];const m=s/60;
   if(m<2)return[Math.round(s)+'s','fresh'];
@@ -469,13 +503,18 @@ function approxMarket(){ // fallback when the live clock is unavailable
   if(mins>=810 && mins<1200) return['ok','market open (approx)'];
   return['warn','market closed (approx)'];}
 
+function marketOpen(){ // best-known market state for row muting
+  if(lastClock && lastClock.age_s!=null && lastClock.age_s<900 && lastClock.is_open!=null)
+    return lastClock.is_open;
+  return approxMarket()[0]==='ok';}
+
 function marketPill(clock){
   const mp=$('#market');
   if(clock && clock.age_s!=null && clock.age_s<900 && clock.is_open!=null){
     mp.className='pill '+(clock.is_open?'ok':'warn');
     mp.children[1].textContent=clock.is_open?'market open':'market closed';
-    const fmt=x=>x?x.replace('T',' ').slice(5,16)+' UTC':'?';
-    mp.title=clock.is_open?('closes '+fmt(clock.next_close)):('opens '+fmt(clock.next_open));
+    const fmtT=x=>x?x.replace('T',' ').slice(5,16)+' UTC':'?';
+    mp.title=clock.is_open?('closes '+fmtT(clock.next_close)):('opens '+fmtT(clock.next_open));
   }else{
     const [mc,mt]=approxMarket(); mp.className='pill '+mc;
     mp.children[1].textContent=mt; mp.title='live clock unavailable; approximate schedule';
@@ -486,9 +525,9 @@ function sparkSVG(vals){
   vals=(vals||[]).filter(v=>v!=null);
   if(vals.length<2) return '<svg class="spark"></svg>';
   const min=Math.min(...vals),max=Math.max(...vals),r=(max-min)||1;
-  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*78+1).toFixed(1)},${(20-(v-min)/r*18+1).toFixed(1)}`).join(' ');
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*70+1).toFixed(1)},${(20-(v-min)/r*18+1).toFixed(1)}`).join(' ');
   const up=vals[vals.length-1]>=vals[0];
-  return `<svg class="spark" viewBox="0 0 80 22"><polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/></svg>`;}
+  return `<svg class="spark" viewBox="0 0 72 22"><polyline fill="none" stroke="${up?'#3fb950':'#f85149'}" stroke-width="1.5" points="${pts}"/></svg>`;}
 
 async function renderHealth(){
   let h; try{h=await (await fetch('/api/health')).json();}catch(e){h={ok:false};}
@@ -508,7 +547,7 @@ async function renderHealth(){
       <div class="d">${esc((s.detail||'').slice(0,42))}</div></div>`;}).join('');
 }
 
-async function renderNews(){
+function renderNews(){
   const box=$('#news');
   if(!newsCache.length){box.innerHTML='<span class="muted">No headlines yet (news service warms up on its next cycle).</span>';return;}
   let items=newsCache, label='latest';
@@ -523,6 +562,41 @@ async function renderNews(){
   </div>`).join('');
 }
 
+function renderCorp(){
+  const box=$('#corp');
+  if(!corpCache.length){box.innerHTML='<span class="muted">No dividends/splits in the last 3 weeks for watchlist stocks.</span>';return;}
+  const today=new Date().toISOString().slice(0,10);
+  box.innerHTML=corpCache.slice(0,7).map(a=>{
+    const typ=(a.type||'').replace(/_/g,' ').replace(/s$/,'');
+    const fut=a.ex_date && a.ex_date>=today;
+    const amt=a.type&&a.type.includes('dividend')?('$'+fmt(a.rate)):
+      (a.old_rate!=null?`${fmt(a.old_rate)}→${fmt(a.rate)}`:fmt(a.rate));
+    return `<div class="ca-item"><span class="sym">${esc(a.symbol)}</span>
+      <span class="typ">${esc(typ)}</span><span>${amt}</span>
+      <span class="spacer"></span>
+      ${fut?'<span class="fut">UPCOMING</span>':''}
+      <span class="muted">ex ${esc(a.ex_date||'?')}</span></div>`;}).join('');
+}
+
+function renderIndicators(){
+  const box=$('#ind');
+  const b=lastBars.find(x=>x.symbol===selected);
+  if(!b){box.innerHTML='';return;}
+  const item=(k,v,tip)=>`<div class="i" title="${tip}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  box.innerHTML=
+    item('RSI 14',b.rsi!=null?b.rsi.toFixed(1):'—','momentum: <30 oversold, >70 overbought')+
+    item('MACD',fmt(b.macd),'MACD line (EMA12 − EMA26)')+
+    item('Signal',fmt(b.macd_signal),'9-period EMA of the MACD line')+
+    item('Hist',fmt(b.macd_hist),'MACD − signal: momentum direction')+
+    item('SMA 20',fmt(b.sma20),'20-bar simple moving average')+
+    item('SMA 50',fmt(b.sma50),'50-bar simple moving average')+
+    item('EMA 12',fmt(b.ema12),'12-bar exponential moving average')+
+    item('EMA 26',fmt(b.ema26),'26-bar exponential moving average')+
+    item('BB up',fmt(b.bb_upper),'Bollinger upper band (SMA20 + 2σ)')+
+    item('BB mid',fmt(b.bb_mid),'Bollinger middle band (SMA20)')+
+    item('BB low',fmt(b.bb_lower),'Bollinger lower band (SMA20 − 2σ)');
+}
+
 async function refresh(){
   renderHealth();
   let d; try{d=await (await fetch('/api/status')).json();}catch(e){d={ok:false,error:e.message};}
@@ -532,58 +606,66 @@ async function refresh(){
   err.innerHTML='';
   const sp=$('#statuspill'); sp.className='pill '+(d.healthy?'ok':'bad');
   sp.children[1].textContent=d.healthy?'functional':'no data';
+  lastClock=d.clock;
   marketPill(d.clock);
 
   try{sparks=await (await fetch('/api/sparklines?n=30')).json();}catch(e){sparks={};}
   try{const nr=await (await fetch('/api/news?limit=30')).json();newsCache=nr.news||[];}catch(e){newsCache=[];}
+  try{const cr=await (await fetch('/api/corpactions?limit=20')).json();corpCache=cr.actions||[];}catch(e){corpCache=[];}
 
   const [aTxt]=age(d.latest_age_s);
   const bars=d.bars||[];
   const fresh=bars.filter(b=>(Date.now()-new Date(b.time))/1000<1200).length;
+  const ses=d.session;
+  const sesV=ses==null?'—':(ses.trading_day?((ses.open||'?')+'–'+(ses.close||'?')+' ET'):'closed');
+  const sesS=ses==null?'calendar unavailable':(ses.trading_day?'regular hours today':'not a trading day');
   const card=(k,v,s,tip)=>`<div class="card" ${tip?`title="${tip}"`:''}><div class="k">${k}</div><div class="v">${v}</div>${s?`<div class="s">${s}</div>`:''}</div>`;
   $('#cards').innerHTML=
     card('Rows',(d.rows||0).toLocaleString(),d.symbols+' symbols','1-min bars stored (365-day retention)')+
     card('Fresh',fresh+'/'+bars.length,'< 20m old','symbols with a recent bar; stocks pause after market close')+
     card('Latest bar',aTxt,'ago','age of the newest bar across all symbols')+
     card('Ingested 1h',(d.written_1h||0).toLocaleString(),'writes','bar rows written in the last hour')+
-    card('Retention',d.retention||'—','drop older','TimescaleDB policy drops bars past this age')+
+    card('Session',sesV,sesS,"today's regular trading hours (exchange calendar)")+
     card('Latency',(d.db_latency_ms??'—')+' ms','status query','time this page took to query the DB')+
     card('Database',d.timescaledb?('TS '+d.timescaledb):'—',(d.postgres||'').replace('PostgreSQL','PG'),'TimescaleDB extension + PostgreSQL server versions');
 
   lastBars=bars.slice().sort((a,b)=>a.symbol<b.symbol?-1:1);
   renderRows();
   if(!selected && lastBars.length){selected=lastBars[0].symbol;drawChart();}
+  renderIndicators();
   renderNews();
+  renderCorp();
   $('#clock').textContent=new Date().toLocaleTimeString();
 }
 
 function renderRows(){
   const f=filter.trim().toUpperCase();
+  const open=marketOpen();
   const rows=lastBars.filter(b=>!f||b.symbol.includes(f)).map(b=>{
-    const secs=(Date.now()-new Date(b.time))/1000;const[t,c]=age(secs);
+    const secs=(Date.now()-new Date(b.time))/1000;let [t,c]=age(secs);
     const sv=sparks[b.symbol]||[];
     const chg=(sv.length>=2 && b.open)?((b.close-b.open)/b.open*100):null;
     const chgTxt=chg==null?'—':(chg>=0?'+':'')+chg.toFixed(2)+'%';
     const chgCls=chg==null?'':(chg>=0?'up':'down');
     const isC=b.symbol.includes('/');
-    const {label:sig,score}=recompute(b);
-    const rsi=b.rsi!=null?b.rsi.toFixed(0):'—';
-    const title=score!=null?`score ${score} of 5 votes`:'indicators still warming up';
-    return {sig, html:`<tr data-sym="${esc(b.symbol)}" class="${b.symbol===selected?'sel':''}">
+    let ageTitle='';
+    if(!isC && !open && c!=='fresh'){c='muted';ageTitle='market closed — stock bars resume at next open';}
+    const mh=b.macd_hist;
+    return `<tr data-sym="${esc(b.symbol)}" class="${b.symbol===selected?'sel':''}">
       <td><b>${esc(b.symbol)}</b><span class="tag ${isC?'c':'s'}">${isC?'CRYPTO':'STOCK'}</span></td>
-      <td>${b.close!=null?b.close.toFixed(2):'—'}</td>
+      <td>${b.close!=null?fmt(b.close):'—'}</td>
       <td class="chg ${chgCls}">${chgTxt}</td>
-      <td><span class="sig ${sig}" title="${title}">${sig}</span></td>
-      <td class="muted">${rsi}</td>
+      <td class="muted">${b.rsi!=null?b.rsi.toFixed(0):'—'}</td>
+      <td class="chg ${mh==null?'':(mh>=0?'up':'down')}">${fmt(mh)}</td>
+      <td class="muted">${fmt(b.sma20)}</td>
+      <td class="muted">${fmt(b.sma50)}</td>
       <td>${sparkSVG(sv)}</td>
-      <td class="${c}">${t}</td></tr>`};})
-    .filter(r=>cfg.filter==='ALL'||r.sig===cfg.filter)
-    .map(r=>r.html).join('');
-  $('#rows').innerHTML=rows||'<tr><td colspan="7" class="muted">No symbols match.</td></tr>';
+      <td class="${c}" title="${ageTitle}">${t}</td></tr>`;}).join('');
+  $('#rows').innerHTML=rows||'<tr><td colspan="9" class="muted">No symbols match.</td></tr>';
   document.querySelectorAll('#rows tr[data-sym]').forEach(tr=>
     tr.onclick=()=>{selected=tr.dataset.sym;
       document.querySelectorAll('#rows tr').forEach(x=>x.classList.remove('sel'));
-      tr.classList.add('sel');drawChart();renderNews();});
+      tr.classList.add('sel');drawChart();renderIndicators();renderNews();});
 }
 
 async function drawChart(){
@@ -625,18 +707,6 @@ function attachHover(svg,p,X){
 $('#filter').oninput=e=>{filter=e.target.value;renderRows();};
 $('#helpbtn').onclick=()=>{const d=$('#docs');d.classList.toggle('open');
   $('#helpbtn').classList.toggle('on',d.classList.contains('open'));};
-
-// Signal tuner wiring
-function syncInputs(){$('#rsiLo').value=cfg.rsiLo;$('#rsiHi').value=cfg.rsiHi;
-  $('#buyCut').value=cfg.buy;$('#sellCut').value=cfg.sell;$('#sigfilter').value=cfg.filter;}
-function bindNum(id,key,lo,hi){$('#'+id).onchange=e=>{
-  let n=parseInt(e.target.value,10);if(isNaN(n))n=DEF[key];
-  n=Math.max(lo,Math.min(hi,n));cfg[key]=n;e.target.value=n;saveCfg();renderRows();};}
-bindNum('rsiLo','rsiLo',1,99);bindNum('rsiHi','rsiHi',1,99);
-bindNum('buyCut','buy',1,5);bindNum('sellCut','sell',-5,-1);
-$('#sigfilter').onchange=e=>{cfg.filter=e.target.value;saveCfg();renderRows();};
-$('#reset').onclick=()=>{cfg=Object.assign({},DEF);saveCfg();syncInputs();renderRows();};
-syncInputs();
 document.querySelectorAll('#ranges button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#ranges button').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');limit=+b.dataset.n;drawChart();});

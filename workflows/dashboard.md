@@ -24,18 +24,33 @@ Visualise pipeline health and stored data to confirm the platform is working.
 ## What it shows
 - Services strip: per-microservice heartbeat (green/amber/red against each
   service's own expected cadence via HEARTBEAT_MAX_AGE).
-- KPI cards: rows, fresh count, latest-bar age, ingest rate, retention,
-  DB latency, TimescaleDB + Postgres versions.
-- Per-symbol table: last price, per-bar change %, signal + RSI, sparkline,
-  freshness. Filter box + signal tuner; click a row to chart + filter news.
+- KPI cards: rows, fresh count, latest-bar age, ingest rate, today's trading
+  session (from market_calendar), DB latency, TimescaleDB + Postgres versions.
+- Per-symbol table of calculated indicators: last price, per-bar change %,
+  RSI(14), MACD histogram, SMA20, SMA50, sparkline, freshness. Stock rows show
+  a muted age while the market is closed (expected, not a fault).
+- Indicator readout for the selected symbol: RSI, MACD line/signal/hist,
+  SMA(20/50), EMA(12/26), Bollinger upper/mid/lower.
 - OHLC candlestick + volume chart with range buttons and hover tooltip.
-- Latest headlines panel (from the news service), filtered by selected symbol.
+- Dividends & splits panel (corporate_actions), with UPCOMING markers.
+- Latest headlines panel (news), filtered by selected symbol.
 - Market open/closed pill driven by the live Alpaca clock (market_clock table),
   falling back to an approximate schedule if stale.
 - Built-in explainer: the "? how this works" button opens in-page documentation
-  covering the data flow, every panel, and the signal-vote logic.
+  covering the data flow and every panel/column.
+
+The BUY/SELL/HOLD signal column was removed from the UI in favor of raw
+indicator values; the signals service still stores signal/score in
+market_signals for later backtesting.
 
 Served by waitress (production WSGI) when installed; Flask dev server otherwise.
+
+## Streaming note (free tier)
+Alpaca allows ONE stream connection per endpoint per account. The central
+Portainer deployment owns it; local bars_stock/bars_crypto are behind the
+`stream` compose profile (`docker compose --profile stream up -d`) and must
+not run while the central deployment streams, or both loop on
+"auth failed: code=406 connection limit exceeded".
 
 ## Endpoints
 - `GET /api/status` — health, KPIs, latest bar per symbol (JSON).

@@ -34,8 +34,12 @@ services:
       retries: 10
 
   # Bars (stock): real-time WebSocket stream -> market_ohlcv
+  # OPT-IN locally (docker compose --profile stream up -d): Alpaca free tier
+  # allows ONE stream connection per endpoint per account, and the central
+  # Portainer deployment owns it. Running both = 406 connection-limit fights.
   bars_stock:
     <<: *svc
+    profiles: ["stream"]
     container_name: fin_bars_stock
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}
@@ -50,8 +54,10 @@ services:
       start_period: 40s
 
   # Bars (crypto): real-time WebSocket stream -> market_ohlcv
+  # OPT-IN locally, same reason as bars_stock.
   bars_crypto:
     <<: *svc
+    profiles: ["stream"]
     container_name: fin_bars_crypto
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-fin}:${POSTGRES_PASSWORD:-fin_dev_pw}@timescaledb:5432/${POSTGRES_DB:-fin}

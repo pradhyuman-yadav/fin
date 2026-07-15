@@ -108,9 +108,13 @@ async def run(market):
                 finally:
                     wd.cancel()
         except Exception as exc:  # noqa: BLE001
-            print(f"{market} stream error, reconnecting in 5s: {exc}", flush=True)
-            beat("reconnecting", str(exc)[:150])
-            await asyncio.sleep(5)
+            msg = str(exc)
+            # 406 = another connection with these keys already holds the stream
+            # (free tier: 1 per endpoint). Back off hard so we don't fight it.
+            delay = 60 if ("connection limit" in msg or "406" in msg) else 5
+            print(f"{market} stream error, reconnecting in {delay}s: {msg}", flush=True)
+            beat("reconnecting", msg[:150])
+            await asyncio.sleep(delay)
 
 
 def main():
